@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Týmová Kasa</title>
+  
+  <!-- Apple Web App Meta Tags pro ikonu a vzhled na ploše -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Týmová Kasa">
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- FontAwesome Ikony (Náhrada za Lucide pro HTML verzi) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- React & Babel -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    /* Schování scrollovací lišty pro mobilní vzhled */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    body { background-color: #0f172a; margin: 0; padding: 0; }
+  </style>
+</head>
+<body class="flex justify-center items-center min-h-screen">
+  <div id="root" class="w-full h-full max-w-md bg-slate-50 relative flex flex-col font-sans sm:rounded-[2.5rem] sm:border-[8px] sm:border-slate-800 sm:shadow-2xl overflow-hidden sm:h-[800px] sm:my-10"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // --- MOCK DATA ---
+    const initialFines = [
+      { id: 1, name: 'Svatba', amount: 2000, icon: '💍' },
+      { id: 2, name: 'Narozeniny', amount: 500, icon: '🎂' },
+      { id: 3, name: 'Pozdní příchod', amount: 50, icon: '⏰' },
+      { id: 4, name: 'Zapomenutý dres', amount: 100, icon: '👕' },
+      { id: 5, name: 'Žlutá karta', amount: 200, icon: '🟨' },
+      { id: 6, name: 'Červená karta', amount: 500, icon: '🟥' },
+      { id: 7, name: 'Nová kopačky', amount: 300, icon: '👟' },
+    ];
+
+    const initialMembers = [
+      { id: 1, name: 'Jan Novák', owed: 250, paid: 1000, debtDate: Date.now() - 86400000 * 2 },
+      { id: 2, name: 'Petr Svoboda', owed: 0, paid: 2500, debtDate: null },
+      { id: 3, name: 'Tomáš Dvořák', owed: 2000, paid: 500, debtDate: Date.now() - 86400000 * 14 },
+      { id: 4, name: 'Lukáš Černý', owed: 100, paid: 800, debtDate: Date.now() - 3600000 * 5 },
+      { id: 5, name: 'Martin Veselý', owed: 0, paid: 1200, debtDate: null },
+    ];
+
+    const initialHistory = [
+      { id: 101, memberId: 1, memberName: 'Jan Novák', fineName: 'Žlutá karta', amount: 200, date: 'Dnes 14:30', type: 'fine' },
+      { id: 102, memberId: 3, memberName: 'Tomáš Dvořák', fineName: 'Svatba', amount: 2000, date: 'Včera 18:15', type: 'fine' },
+      { id: 103, memberId: 2, memberName: 'Petr Svoboda', fineName: 'Úhrada dluhu', amount: 500, date: '20. úno', type: 'payment' },
+    ];
+
+    function App() {
+      const [activeTab, setActiveTab] = useState('home');
+      
+      const [members, setMembers] = useState(() => {
+        try { const item = window.localStorage.getItem('teamKasa_members'); return item ? JSON.parse(item) : initialMembers; } 
+        catch (e) { return initialMembers; }
+      });
+      
+      const [fines, setFines] = useState(() => {
+        try { const item = window.localStorage.getItem('teamKasa_fines'); return item ? JSON.parse(item) : initialFines; } 
+        catch (e) { return initialFines; }
+      });
+      
+      const [history, setHistory] = useState(() => {
+        try { const item = window.localStorage.getItem('teamKasa_history'); return item ? JSON.parse(item) : initialHistory; } 
+        catch (e) { return initialHistory; }
+      });
+
+      useEffect(() => { window.localStorage.setItem('teamKasa_members', JSON.stringify(members)); }, [members]);
+      useEffect(() => { window.localStorage.setItem('teamKasa_fines', JSON.stringify(fines)); }, [fines]);
+      useEffect(() => { window.localStorage.setItem('teamKasa_history', JSON.stringify(history)); }, [history]);
+      
+      const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+      const [selectedMember, setSelectedMember] = useState(null);
+      const [dashboardFilter, setDashboardFilter] = useState('history');
+
+      const formatDebtAge = (timestamp) => {
+        if (!timestamp) return '';
+        const diffDays = Math.floor((Date.now() - timestamp) / (1000 * 60 * 60 * 24));
+        if (diffDays === 0) return 'Dnes';
+        if (diffDays === 1) return 'Včera';
+        return `Před ${diffDays} dny`;
+      };
+
+      const totalInBank = members.reduce((sum, m) => sum + m.paid, 0);
+      const totalOwed = members.reduce((sum, m) => sum + m.owed, 0);
+      const topPaidMembers = [...members].sort((a, b) => b.paid - a.paid);
+
+      const handleAddFine = (memberId, fine) => {
+        setMembers(members.map(m => {
+          if (m.id === memberId) {
+            return { ...m, owed: m.owed + fine.amount, debtDate: m.owed === 0 ? Date.now() : m.debtDate };
+          }
+          return m;
+        }));
+        
+        const member = members.find(m => m.id === memberId);
+        setHistory([{
+          id: Date.now(),
+          memberId: member.id,
+          memberName: member.name,
+          fineName: fine.name,
+          amount: fine.amount,
+          date: 'Právě teď',
+          type: 'fine'
+        }, ...history]);
+
+        setIsAddModalOpen(false);
+        setSelectedMember(null);
+      };
+
+      const handlePayDebt = (memberId) => {
+        const member = members.find(m => m.id === memberId);
+        if (member.owed === 0) return;
+
+        setMembers(members.map(m => 
+          m.id === memberId ? { ...m, paid: m.paid + m.owed, owed: 0, debtDate: null } : m
+        ));
+
+        setHistory([{
+          id: Date.now(),
+          memberId: member.id,
+          memberName: member.name,
+          fineName: 'Úhrada dluhu',
+          amount: member.owed,
+          date: 'Právě teď',
+          type: 'payment'
+        }, ...history]);
+      };
+
+      const AddFineModal = () => (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center transition-opacity">
+          <div className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl h-[80vh] sm:h-[600px] flex flex-col shadow-2xl">
+            <div className="flex justify-between items-center p-5 border-b border-gray-100">
+              <h2 className="text-xl font-bold text-slate-800">
+                {selectedMember ? `Pokuta pro: ${selectedMember.name}` : 'Nová pokuta'}
+              </h2>
+              <button onClick={() => { setIsAddModalOpen(false); setSelectedMember(null); }} className="p-2 bg-slate-100 rounded-full text-slate-500 hover:bg-slate-200">
+                <i className="fas fa-times"></i>
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4 bg-slate-50 no-scrollbar">
+              {!selectedMember ? (
+                <div>
+                  <p className="text-sm text-slate-500 mb-3 font-medium px-1">1. Vyber hříšníka</p>
+                  <div className="space-y-2">
+                    {members.map(m => (
+                      <button 
+                        key={m.id}
+                        onClick={() => setSelectedMember(m)}
+                        className="w-full flex items-center p-3 bg-white rounded-xl shadow-sm border border-slate-100 active:bg-blue-50 text-left transition"
+                      >
+                        <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold mr-3">
+                          {m.name.split(' ').map(n => n[0]).join('')}
+                        </div>
+                        <span className="font-semibold text-slate-700">{m.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <p className="text-sm text-slate-500 mb-3 font-medium px-1">2. Vyber pokutu</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    {fines.map(fine => (
+                      <button
+                        key={fine.id}
+                        onClick={() => handleAddFine(selectedMember.id, fine)}
+                        className="flex flex-col items-center justify-center p-4 bg-white rounded-2xl shadow-sm border border-slate-100 hover:border-blue-300 active:scale-95 transition"
+                      >
+                        <span className="text-3xl mb-2">{fine.icon}</span>
+                        <span className="font-medium text-slate-700 text-sm text-center line-clamp-1">{fine.name}</span>
+                        <span className="text-blue-600 font-bold mt-1">{fine.amount} Kč</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+
+      return (
+        <>
+          {/* HEADER */}
+          <div className="bg-white pt-12 pb-4 px-6 rounded-b-3xl shadow-sm z-10 w-full sticky top-0">
+            <h1 className="text-2xl font-extrabold text-slate-800 tracking-tight">
+              {activeTab === 'home' && 'Týmová Kasa'}
+              {activeTab === 'leaderboard' && 'Síň slávy'}
+              {activeTab === 'members' && 'Seznam hráčů'}
+              {activeTab === 'fines' && 'Sazebník pokut'}
+            </h1>
+          </div>
+
+          {/* CONTENT AREA */}
+          <div className="flex-1 overflow-y-auto w-full pb-24 no-scrollbar">
+            
+            {activeTab === 'home' && (
+              <div className="p-5 space-y-6">
+                
+                <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-3xl p-6 text-white shadow-lg shadow-blue-200">
+                  <div className="flex items-center space-x-2 opacity-80 mb-1">
+                    <i className="fas fa-money-bill-wave"></i>
+                    <span className="font-medium text-sm">Aktuálně v kase</span>
+                  </div>
+                  <div className="text-4xl font-black tracking-tight mb-4">
+                    {totalInBank.toLocaleString('cs-CZ')} Kč
+                  </div>
+                  
+                  <div className="bg-white/20 rounded-2xl p-4 flex justify-between items-center backdrop-blur-sm">
+                    <div>
+                      <div className="text-blue-100 text-xs font-medium mb-1">Dluží se</div>
+                      <div className="text-xl font-bold">{totalOwed.toLocaleString('cs-CZ')} Kč</div>
+                    </div>
+                    <div className="h-10 w-10 bg-white/20 rounded-full flex items-center justify-center">
+                      <i className="fas fa-exclamation-circle"></i>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <button 
+                    onClick={() => setIsAddModalOpen(true)}
+                    className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 active:bg-slate-50"
+                  >
+                    <div className="bg-blue-100 p-3 rounded-full text-blue-600">
+                      <i className="fas fa-plus text-xl"></i>
+                    </div>
+                    <span className="font-semibold text-slate-700 text-sm">Zadat pokutu</span>
+                  </button>
+                  <button 
+                    onClick={() => setActiveTab('members')}
+                    className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 active:bg-slate-50"
+                  >
+                    <div className="bg-green-100 p-3 rounded-full text-green-600">
+                      <i className="fas fa-check text-xl"></i>
+                    </div>
+                    <span className="font-semibold text-slate-700 text-sm">Zaplatit dluh</span>
+                  </button>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-3 px-1">
+                    <h3 className="font-bold text-slate-800 text-lg">Přehled</h3>
+                  </div>
+                  
+                  <div className="flex space-x-2 overflow-x-auto no-scrollbar mb-4 pb-2 px-1">
+                    <button
+                      onClick={() => setDashboardFilter('history')}
+                      className={`px-4 py-1.5 rounded-full text-sm font-bold whitespace-nowrap transition-colors ${dashboardFilter === 'history' ? 'bg-slate-800 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200'}`}
+                    >
+                      Poslední akce
+                    </button>
+                    <button
+                      onClick={() => setDashboardFilter('top_debt')}
+                      className={`px-4 py-1.5 rounded-full text-sm font-bold whitespace-nowrap transition-colors ${dashboardFilter === 'top_debt' ? 'bg-red-500 text-white shadow-md shadow-red-200' : 'bg-white text-slate-500 border border-slate-200'}`}
+                    >
+                      Největší dlužníci
+                    </button>
+                    <button
+                      onClick={() => setDashboardFilter('oldest_debt')}
+                      className={`px-4 py-1.5 rounded-full text-sm font-bold whitespace-nowrap transition-colors ${dashboardFilter === 'oldest_debt' ? 'bg-orange-500 text-white shadow-md shadow-orange-200' : 'bg-white text-slate-500 border border-slate-200'}`}
+                    >
+                      Nejstarší dluhy
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {dashboardFilter === 'history' && history.slice(0, 5).map(item => (
+                      <div key={item.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${item.type === 'fine' ? 'bg-red-50 text-red-500' : 'bg-green-50 text-green-500'}`}>
+                            {item.type === 'fine' ? <i className="fas fa-exclamation-circle"></i> : <i className="fas fa-check"></i>}
+                          </div>
+                          <div>
+                            <p className="font-semibold text-slate-700">{item.memberName}</p>
+                            <p className="text-xs text-slate-400">{item.fineName} • {item.date}</p>
+                          </div>
+                        </div>
+                        <div className={`font-bold ${item.type === 'fine' ? 'text-red-500' : 'text-green-500'}`}>
+                          {item.type === 'fine' ? '+' : '-'}{item.amount} Kč
+                        </div>
+                      </div>
+                    ))}
+
+                    {(dashboardFilter === 'top_debt' || dashboardFilter === 'oldest_debt') && 
+                      members
+                        .filter(m => m.owed > 0)
+                        .sort((a, b) => dashboardFilter === 'top_debt' ? b.owed - a.owed : a.debtDate - b.debtDate)
+                        .map(member => (
+                          <div key={member.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
+                            <div className="flex items-center space-x-3">
+                              <div className="w-10 h-10 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center font-bold">
+                                {member.name.split(' ').map(n => n[0]).join('')}
+                              </div>
+                              <div>
+                                <p className="font-semibold text-slate-700">{member.name}</p>
+                                <p className="text-xs text-slate-400">
+                                  {dashboardFilter === 'oldest_debt' ? `Nezaplaceno: ${formatDebtAge(member.debtDate)}` : `Celkem dluží`}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex flex-col items-end">
+                              <span className="font-black text-red-500">{member.owed} Kč</span>
+                              <button 
+                                onClick={() => handlePayDebt(member.id)}
+                                className="mt-1 text-[10px] font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg active:bg-blue-100 transition"
+                              >
+                                Uhradit
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                    }
+
+                    {(dashboardFilter === 'top_debt' || dashboardFilter === 'oldest_debt') && members.filter(m => m.owed > 0).length === 0 && (
+                      <div className="text-center py-8">
+                        <div className="w-12 h-12 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-3">
+                          <i className="fas fa-check text-green-500 text-xl"></i>
+                        </div>
+                        <p className="font-semibold text-slate-700">Všichni mají zaplaceno!</p>
+                        <p className="text-sm text-slate-400">Tým má čistý štít.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'leaderboard' && (
+              <div className="p-5">
+                <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 mb-6">
+                  <p className="text-center text-slate-500 font-medium mb-6">Největší sponzoři týmové kasy</p>
+                  
+                  <div className="flex items-end justify-center gap-2 mt-4">
+                    {topPaidMembers[1] && (
+                      <div className="flex flex-col items-center">
+                        <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center font-bold mb-2 shadow-sm border-2 border-slate-200">
+                          {topPaidMembers[1].name.split(' ').map(n => n[0]).join('')}
+                        </div>
+                        <div className="w-20 h-24 bg-gradient-to-t from-slate-200 to-slate-100 rounded-t-xl flex flex-col items-center justify-start pt-2 border-t border-x border-slate-200">
+                          <span className="text-2xl font-black text-slate-400">2</span>
+                          <span className="text-xs font-bold text-slate-500 mt-1">{topPaidMembers[1].paid} Kč</span>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {topPaidMembers[0] && (
+                      <div className="flex flex-col items-center relative z-10">
+                        <i className="fas fa-trophy text-yellow-500 text-2xl mb-2 drop-shadow-sm"></i>
+                        <div className="w-16 h-16 rounded-full bg-yellow-50 text-yellow-600 flex items-center justify-center font-bold text-lg mb-2 shadow-md border-2 border-yellow-300">
+                          {topPaidMembers[0].name.split(' ').map(n => n[0]).join('')}
+                        </div>
+                        <div className="w-24 h-32 bg-gradient-to-t from-yellow-300 to-yellow-100 rounded-t-xl flex flex-col items-center justify-start pt-2 shadow-lg border-t border-x border-yellow-300">
+                          <span className="text-4xl font-black text-yellow-600">1</span>
+                          <span className="text-sm font-bold text-yellow-700 mt-1">{topPaidMembers[0].paid} Kč</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {topPaidMembers[2] && (
+                      <div className="flex flex-col items-center">
+                        <div className="w-12 h-12 rounded-full bg-orange-50 text-orange-600 flex items-center justify-center font-bold mb-2 shadow-sm border-2 border-orange-200">
+                          {topPaidMembers[2].name.split(' ').map(n => n[0]).join('')}
+                        </div>
+                        <div className="w-20 h-20 bg-gradient-to-t from-orange-200 to-orange-100 rounded-t-xl flex flex-col items-center justify-start pt-2 border-t border-x border-orange-200">
+                          <span className="text-2xl font-black text-orange-400">3</span>
+                          <span className="text-xs font-bold text-orange-600 mt-1">{topPaidMembers[2].paid} Kč</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  {topPaidMembers.slice(3).map((member, index) => (
+                    <div key={member.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
+                      <div className="flex items-center space-x-4">
+                        <span className="font-bold text-slate-400 w-4 text-center">{index + 4}.</span>
+                        <div className="w-10 h-10 rounded-full bg-slate-50 text-slate-500 flex items-center justify-center font-bold text-sm">
+                          {member.name.split(' ').map(n => n[0]).join('')}
+                        </div>
+                        <span className="font-semibold text-slate-700">{member.name}</span>
+                      </div>
+                      <span className="font-black text-slate-600">{member.paid} Kč</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'members' && (
+              <div className="p-5 space-y-4">
+                <div className="flex justify-between items-center px-1 mb-2">
+                  <p className="text-slate-500 text-sm font-medium">Kliknutím na hráče spravuješ dluh</p>
+                  <button className="text-blue-600 flex items-center text-sm font-bold">
+                    <i className="fas fa-user-plus mr-2"></i> Přidat
+                  </button>
+                </div>
+                
+                {members.sort((a,b) => b.owed - a.owed).map(member => (
+                  <div key={member.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center font-bold text-lg">
+                        {member.name.split(' ').map(n => n[0]).join('')}
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-800 text-lg">{member.name}</p>
+                        <p className="text-xs text-slate-400 font-medium">Zaplaceno celkem: {member.paid} Kč</p>
+                      </div>
+                    </div>
+                    
+                    <div className="flex flex-col items-end">
+                      {member.owed > 0 ? (
+                        <>
+                          <span className="font-black text-red-500 text-lg">{member.owed} Kč</span>
+                          <span className="text-[10px] text-red-400 font-bold uppercase tracking-wider">Dluží</span>
+                          <button 
+                            onClick={() => handlePayDebt(member.id)}
+                            className="mt-2 bg-green-100 text-green-700 text-xs font-bold px-3 py-1.5 rounded-lg active:bg-green-200 transition"
+                          >
+                            Uhradit
+                          </button>
+                        </>
+                      ) : (
+                        <span className="bg-green-50 text-green-600 px-3 py-1.5 rounded-lg text-sm font-bold flex items-center">
+                          <i className="fas fa-check mr-1 text-xs"></i> Čistý
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {activeTab === 'fines' && (
+              <div className="p-5">
+                <div className="grid grid-cols-1 gap-3">
+                  {fines.map(fine => (
+                    <div key={fine.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
+                      <div className="flex items-center space-x-4">
+                        <span className="text-3xl bg-slate-50 w-12 h-12 flex items-center justify-center rounded-xl">{fine.icon}</span>
+                        <span className="font-semibold text-slate-800 text-lg">{fine.name}</span>
+                      </div>
+                      <span className="font-black text-blue-600 text-lg">{fine.amount} Kč</span>
+                    </div>
+                  ))}
+                  <button className="border-2 border-dashed border-slate-300 p-4 rounded-2xl text-slate-500 font-bold flex items-center justify-center hover:bg-slate-50 transition mt-2">
+                    <i className="fas fa-plus mr-2"></i> Přidat novou položku
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* BOTTOM TAB BAR */}
+          <div className="absolute bottom-0 w-full bg-white border-t border-slate-100 px-6 py-4 pb-8 sm:pb-6 flex justify-around items-center z-20">
+            <button onClick={() => setActiveTab('home')} className={`flex flex-col items-center space-y-1 w-16 transition-colors ${activeTab === 'home' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
+              <div className={`p-2 rounded-xl ${activeTab === 'home' ? 'bg-blue-50' : ''}`}><i className="fas fa-home text-xl"></i></div>
+              <span className="text-[10px] font-bold">Kasa</span>
+            </button>
+
+            <button onClick={() => setActiveTab('leaderboard')} className={`flex flex-col items-center space-y-1 w-16 transition-colors ${activeTab === 'leaderboard' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
+              <div className={`p-2 rounded-xl ${activeTab === 'leaderboard' ? 'bg-blue-50' : ''}`}><i className="fas fa-trophy text-xl"></i></div>
+              <span className="text-[10px] font-bold">Žebříček</span>
+            </button>
+
+            <button onClick={() => setActiveTab('members')} className={`flex flex-col items-center space-y-1 w-16 transition-colors ${activeTab === 'members' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
+              <div className={`p-2 rounded-xl ${activeTab === 'members' ? 'bg-blue-50' : ''}`}><i className="fas fa-user-friends text-xl"></i></div>
+              <span className="text-[10px] font-bold">Tým</span>
+            </button>
+
+            <button onClick={() => setActiveTab('fines')} className={`flex flex-col items-center space-y-1 w-16 transition-colors ${activeTab === 'fines' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
+               <div className={`p-2 rounded-xl ${activeTab === 'fines' ? 'bg-blue-50' : ''}`}><i className="fas fa-list text-xl"></i></div>
+              <span className="text-[10px] font-bold">Sazebník</span>
+            </button>
+          </div>
+
+          {isAddModalOpen && <AddFineModal />}
+        </>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
