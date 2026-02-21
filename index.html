@@ -83,7 +83,7 @@
       
       const [isAddModalOpen, setIsAddModalOpen] = useState(false);
       const [selectedMember, setSelectedMember] = useState(null);
-      const [dashboardFilter, setDashboardFilter] = useState('history');
+      const [membersFilter, setMembersFilter] = useState('all');
 
       const formatDebtAge = (timestamp) => {
         if (!timestamp) return '';
@@ -231,55 +231,34 @@
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="flex justify-center gap-8 py-2">
                   <button 
                     onClick={() => setIsAddModalOpen(true)}
-                    className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 active:bg-slate-50"
+                    className="flex flex-col items-center justify-center gap-2 group"
                   >
-                    <div className="bg-blue-100 p-3 rounded-full text-blue-600">
-                      <i className="fas fa-plus text-xl"></i>
+                    <div className="w-16 h-16 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-lg shadow-blue-200 group-active:scale-95 transition-transform">
+                      <i className="fas fa-plus text-2xl"></i>
                     </div>
-                    <span className="font-semibold text-slate-700 text-sm">Zadat pokutu</span>
+                    <span className="font-bold text-slate-700 text-sm">Zadat pokutu</span>
                   </button>
                   <button 
                     onClick={() => setActiveTab('members')}
-                    className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 active:bg-slate-50"
+                    className="flex flex-col items-center justify-center gap-2 group"
                   >
-                    <div className="bg-green-100 p-3 rounded-full text-green-600">
-                      <i className="fas fa-check text-xl"></i>
+                    <div className="w-16 h-16 bg-green-500 text-white rounded-full flex items-center justify-center shadow-lg shadow-green-200 group-active:scale-95 transition-transform">
+                      <i className="fas fa-check text-2xl"></i>
                     </div>
-                    <span className="font-semibold text-slate-700 text-sm">Zaplatit dluh</span>
+                    <span className="font-bold text-slate-700 text-sm">Zaplatit dluh</span>
                   </button>
                 </div>
 
                 <div>
                   <div className="flex items-center justify-between mb-3 px-1">
-                    <h3 className="font-bold text-slate-800 text-lg">Přehled</h3>
-                  </div>
-                  
-                  <div className="flex space-x-2 overflow-x-auto no-scrollbar mb-4 pb-2 px-1">
-                    <button
-                      onClick={() => setDashboardFilter('history')}
-                      className={`px-4 py-1.5 rounded-full text-sm font-bold whitespace-nowrap transition-colors ${dashboardFilter === 'history' ? 'bg-slate-800 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200'}`}
-                    >
-                      Poslední akce
-                    </button>
-                    <button
-                      onClick={() => setDashboardFilter('top_debt')}
-                      className={`px-4 py-1.5 rounded-full text-sm font-bold whitespace-nowrap transition-colors ${dashboardFilter === 'top_debt' ? 'bg-red-500 text-white shadow-md shadow-red-200' : 'bg-white text-slate-500 border border-slate-200'}`}
-                    >
-                      Největší dlužníci
-                    </button>
-                    <button
-                      onClick={() => setDashboardFilter('oldest_debt')}
-                      className={`px-4 py-1.5 rounded-full text-sm font-bold whitespace-nowrap transition-colors ${dashboardFilter === 'oldest_debt' ? 'bg-orange-500 text-white shadow-md shadow-orange-200' : 'bg-white text-slate-500 border border-slate-200'}`}
-                    >
-                      Nejstarší dluhy
-                    </button>
+                    <h3 className="font-bold text-slate-800 text-lg">Poslední akce</h3>
                   </div>
 
                   <div className="space-y-3">
-                    {dashboardFilter === 'history' && history.slice(0, 5).map(item => (
+                    {history.slice(0, 5).map(item => (
                       <div key={item.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
                         <div className="flex items-center space-x-3">
                           <div className={`w-10 h-10 rounded-full flex items-center justify-center ${item.type === 'fine' ? 'bg-red-50 text-red-500' : 'bg-green-50 text-green-500'}`}>
@@ -295,45 +274,8 @@
                         </div>
                       </div>
                     ))}
-
-                    {(dashboardFilter === 'top_debt' || dashboardFilter === 'oldest_debt') && 
-                      members
-                        .filter(m => m.owed > 0)
-                        .sort((a, b) => dashboardFilter === 'top_debt' ? b.owed - a.owed : a.debtDate - b.debtDate)
-                        .map(member => (
-                          <div key={member.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
-                            <div className="flex items-center space-x-3">
-                              <div className="w-10 h-10 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center font-bold">
-                                {member.name.split(' ').map(n => n[0]).join('')}
-                              </div>
-                              <div>
-                                <p className="font-semibold text-slate-700">{member.name}</p>
-                                <p className="text-xs text-slate-400">
-                                  {dashboardFilter === 'oldest_debt' ? `Nezaplaceno: ${formatDebtAge(member.debtDate)}` : `Celkem dluží`}
-                                </p>
-                              </div>
-                            </div>
-                            <div className="flex flex-col items-end">
-                              <span className="font-black text-red-500">{member.owed} Kč</span>
-                              <button 
-                                onClick={() => handlePayDebt(member.id)}
-                                className="mt-1 text-[10px] font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg active:bg-blue-100 transition"
-                              >
-                                Uhradit
-                              </button>
-                            </div>
-                          </div>
-                        ))
-                    }
-
-                    {(dashboardFilter === 'top_debt' || dashboardFilter === 'oldest_debt') && members.filter(m => m.owed > 0).length === 0 && (
-                      <div className="text-center py-8">
-                        <div className="w-12 h-12 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-3">
-                          <i className="fas fa-check text-green-500 text-xl"></i>
-                        </div>
-                        <p className="font-semibold text-slate-700">Všichni mají zaplaceno!</p>
-                        <p className="text-sm text-slate-400">Tým má čistý štít.</p>
-                      </div>
+                    {history.length === 0 && (
+                      <p className="text-center text-slate-400 py-4 text-sm font-medium">Zatím žádné akce</p>
                     )}
                   </div>
                 </div>
@@ -405,44 +347,92 @@
             {activeTab === 'members' && (
               <div className="p-5 space-y-4">
                 <div className="flex justify-between items-center px-1 mb-2">
-                  <p className="text-slate-500 text-sm font-medium">Kliknutím na hráče spravuješ dluh</p>
-                  <button className="text-blue-600 flex items-center text-sm font-bold">
+                  <h2 className="font-bold text-slate-800 text-xl">Tým</h2>
+                  <button className="text-blue-600 flex items-center text-sm font-bold bg-blue-50 px-3 py-1.5 rounded-lg active:bg-blue-100 transition">
                     <i className="fas fa-user-plus mr-2"></i> Přidat
                   </button>
                 </div>
+
+                <div className="flex space-x-2 overflow-x-auto no-scrollbar mb-2 pb-2 px-1">
+                  <button
+                    onClick={() => setMembersFilter('all')}
+                    className={`px-4 py-1.5 rounded-full text-sm font-bold whitespace-nowrap transition-colors ${membersFilter === 'all' ? 'bg-slate-800 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200'}`}
+                  >
+                    Všichni
+                  </button>
+                  <button
+                    onClick={() => setMembersFilter('top_debt')}
+                    className={`px-4 py-1.5 rounded-full text-sm font-bold whitespace-nowrap transition-colors ${membersFilter === 'top_debt' ? 'bg-red-500 text-white shadow-md shadow-red-200' : 'bg-white text-slate-500 border border-slate-200'}`}
+                  >
+                    Největší dlužníci
+                  </button>
+                  <button
+                    onClick={() => setMembersFilter('oldest_debt')}
+                    className={`px-4 py-1.5 rounded-full text-sm font-bold whitespace-nowrap transition-colors ${membersFilter === 'oldest_debt' ? 'bg-orange-500 text-white shadow-md shadow-orange-200' : 'bg-white text-slate-500 border border-slate-200'}`}
+                  >
+                    Nejstarší dluhy
+                  </button>
+                </div>
                 
-                {members.sort((a,b) => b.owed - a.owed).map(member => (
-                  <div key={member.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center font-bold text-lg">
-                        {member.name.split(' ').map(n => n[0]).join('')}
+                <div className="space-y-3">
+                  {(() => {
+                    let displayedMembers = [...members];
+                    if (membersFilter === 'top_debt') {
+                      displayedMembers = displayedMembers.filter(m => m.owed > 0).sort((a, b) => b.owed - a.owed);
+                    } else if (membersFilter === 'oldest_debt') {
+                      displayedMembers = displayedMembers.filter(m => m.owed > 0).sort((a, b) => a.debtDate - b.debtDate);
+                    } else {
+                      displayedMembers.sort((a, b) => b.owed - a.owed);
+                    }
+
+                    if (displayedMembers.length === 0) {
+                      return (
+                        <div className="text-center py-8">
+                          <div className="w-12 h-12 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-3">
+                            <i className="fas fa-check text-green-500 text-xl"></i>
+                          </div>
+                          <p className="font-semibold text-slate-700">Všichni mají zaplaceno!</p>
+                          <p className="text-sm text-slate-400">Tým má čistý štít.</p>
+                        </div>
+                      );
+                    }
+
+                    return displayedMembers.map(member => (
+                      <div key={member.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center font-bold text-lg">
+                            {member.name.split(' ').map(n => n[0]).join('')}
+                          </div>
+                          <div>
+                            <p className="font-bold text-slate-800 text-lg">{member.name}</p>
+                            <p className="text-xs text-slate-400 font-medium">
+                              {membersFilter === 'oldest_debt' ? `Nezaplaceno: ${formatDebtAge(member.debtDate)}` : `Zaplaceno celkem: ${member.paid} Kč`}
+                            </p>
+                          </div>
+                        </div>
+                        
+                        <div className="flex flex-col items-end">
+                          {member.owed > 0 ? (
+                            <>
+                              <span className="font-black text-red-500 text-lg">{member.owed} Kč</span>
+                              <span className="text-[10px] text-red-400 font-bold uppercase tracking-wider">Dluží</span>
+                              <button 
+                                onClick={() => handlePayDebt(member.id)}
+                                className="mt-2 bg-green-100 text-green-700 text-xs font-bold px-3 py-1.5 rounded-lg active:bg-green-200 transition"
+                              >
+                                Uhradit
+                              </button>
+                            </>
+                          ) : (
+                            <span className="bg-green-50 text-green-600 px-3 py-1.5 rounded-lg text-sm font-bold flex items-center">
+                              <i className="fas fa-check mr-1 text-xs"></i> Čistý
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-bold text-slate-800 text-lg">{member.name}</p>
-                        <p className="text-xs text-slate-400 font-medium">Zaplaceno celkem: {member.paid} Kč</p>
-                      </div>
-                    </div>
-                    
-                    <div className="flex flex-col items-end">
-                      {member.owed > 0 ? (
-                        <>
-                          <span className="font-black text-red-500 text-lg">{member.owed} Kč</span>
-                          <span className="text-[10px] text-red-400 font-bold uppercase tracking-wider">Dluží</span>
-                          <button 
-                            onClick={() => handlePayDebt(member.id)}
-                            className="mt-2 bg-green-100 text-green-700 text-xs font-bold px-3 py-1.5 rounded-lg active:bg-green-200 transition"
-                          >
-                            Uhradit
-                          </button>
-                        </>
-                      ) : (
-                        <span className="bg-green-50 text-green-600 px-3 py-1.5 rounded-lg text-sm font-bold flex items-center">
-                          <i className="fas fa-check mr-1 text-xs"></i> Čistý
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                    ));
+                  })()}
+                </div>
               </div>
             )}
 
