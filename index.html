@@ -5,27 +5,26 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Týmová Kasa</title>
   
-  <!-- Apple Web App Meta Tags pro ikonu a vzhled na ploše -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Týmová Kasa">
   
-  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
-  
-  <!-- FontAwesome Ikony (Náhrada za Lucide pro HTML verzi) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  
-  <!-- React & Babel -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <style>
-    /* Schování scrollovací lišty pro mobilní vzhled */
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     body { background-color: #0f172a; margin: 0; padding: 0; }
+    
+    /* Přidané styly pro 3D otočnou kartu */
+    .perspective-1000 { perspective: 1000px; }
+    .transform-style-3d { transform-style: preserve-3d; }
+    .backface-hidden { backface-visibility: hidden; }
+    .rotate-y-180 { transform: rotateY(180deg); }
   </style>
 </head>
 <body class="flex justify-center items-center min-h-screen">
@@ -34,7 +33,6 @@
   <script type="text/babel">
     const { useState, useEffect } = React;
 
-    // --- MOCK DATA ---
     const initialFines = [
       { id: 1, name: 'Svatba', amount: 2000, icon: '💍' },
       { id: 2, name: 'Narozeniny', amount: 500, icon: '🎂' },
@@ -77,13 +75,47 @@
         catch (e) { return initialHistory; }
       });
 
+      const [expenses, setExpenses] = useState(() => {
+        try { const item = window.localStorage.getItem('teamKasa_expenses'); return item ? JSON.parse(item) : []; } 
+        catch (e) { return []; }
+      });
+
+      const [qrCodeImage, setQrCodeImage] = useState(() => {
+        try { return window.localStorage.getItem('teamKasa_qr') || null; } 
+        catch (e) { return null; }
+      });
+
       useEffect(() => { window.localStorage.setItem('teamKasa_members', JSON.stringify(members)); }, [members]);
       useEffect(() => { window.localStorage.setItem('teamKasa_fines', JSON.stringify(fines)); }, [fines]);
       useEffect(() => { window.localStorage.setItem('teamKasa_history', JSON.stringify(history)); }, [history]);
+      useEffect(() => { window.localStorage.setItem('teamKasa_expenses', JSON.stringify(expenses)); }, [expenses]);
+      
+      useEffect(() => { 
+        if (qrCodeImage) {
+          window.localStorage.setItem('teamKasa_qr', qrCodeImage);
+        } else {
+          window.localStorage.removeItem('teamKasa_qr');
+        }
+      }, [qrCodeImage]);
       
       const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+      const [isQuickPayModalOpen, setIsQuickPayModalOpen] = useState(false);
+      const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
       const [selectedMember, setSelectedMember] = useState(null);
       const [membersFilter, setMembersFilter] = useState('all');
+
+      const [payingMember, setPayingMember] = useState(null);
+      const [payAmount, setPayAmount] = useState(0);
+
+      const [expenseName, setExpenseName] = useState('');
+      const [expenseAmount, setExpenseAmount] = useState('');
+
+      // STAV PRO POČET OTOČENÍ KARTY (Pro cyklování 3 stavů)
+      const [flipCount, setFlipCount] = useState(0);
+
+      // Výpočet indexů pro líc a rub, aby nedocházelo k problikávání obsahu během otáčení
+      const sideAIndex = Math.floor(flipCount / 2) * 2;
+      const sideBIndex = flipCount === 0 ? 1 : Math.floor((flipCount - 1) / 2) * 2 + 1;
 
       const formatDebtAge = (timestamp) => {
         if (!timestamp) return '';
@@ -93,9 +125,17 @@
         return `Před ${diffDays} dny`;
       };
 
-      const totalInBank = members.reduce((sum, m) => sum + m.paid, 0);
-      const totalOwed = members.reduce((sum, m) => sum + m.owed, 0);
+      const totalCollected = members.reduce((sum, m) => sum + m.paid, 0); 
+      const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0); 
+      const totalInBank = totalCollected - totalExpenses; 
+      const totalOwed = members.reduce((sum, m) => sum + m.owed, 0); 
+      
+      const totalExpected = totalCollected + totalOwed; 
+      const collectionRate = totalExpected > 0 ? Math.round((totalCollected / totalExpected) * 100) : 0;
+      
       const topPaidMembers = [...members].sort((a, b) => b.paid - a.paid);
+
+      const maxChartValue = Math.max(totalCollected, totalExpenses, totalOwed, 1);
 
       const handleAddFine = (memberId, fine) => {
         setMembers(members.map(m => {
@@ -120,33 +160,217 @@
         setSelectedMember(null);
       };
 
-      const handlePayDebt = (memberId) => {
-        const member = members.find(m => m.id === memberId);
-        if (member.owed === 0) return;
+      const openPayModal = (member) => {
+        setPayingMember(member);
+        setPayAmount(member.owed);
+      };
 
-        setMembers(members.map(m => 
-          m.id === memberId ? { ...m, paid: m.paid + m.owed, owed: 0, debtDate: null } : m
-        ));
+      const confirmPayment = () => {
+        if (!payingMember || payAmount <= 0) return;
+
+        setMembers(members.map(m => {
+          if (m.id === payingMember.id) {
+            const newOwed = m.owed - payAmount;
+            return { 
+              ...m, 
+              paid: m.paid + payAmount, 
+              owed: newOwed, 
+              debtDate: newOwed === 0 ? null : m.debtDate 
+            };
+          }
+          return m;
+        }));
 
         setHistory([{
           id: Date.now(),
-          memberId: member.id,
-          memberName: member.name,
-          fineName: 'Úhrada dluhu',
-          amount: member.owed,
+          memberId: payingMember.id,
+          memberName: payingMember.name,
+          fineName: payAmount === payingMember.owed ? 'Úhrada dluhu' : 'Částečná úhrada',
+          amount: payAmount,
           date: 'Právě teď',
           type: 'payment'
         }, ...history]);
+
+        setPayingMember(null);
       };
 
+      const handleAddExpense = (e) => {
+        e.preventDefault();
+        const amount = Number(expenseAmount);
+        if (!expenseName || amount <= 0) return;
+
+        const newExpense = {
+          id: Date.now(),
+          name: expenseName,
+          amount: amount,
+          date: new Date().toISOString()
+        };
+
+        setExpenses([newExpense, ...expenses]);
+
+        setHistory([{
+          id: Date.now() + 1,
+          memberId: 'team',
+          memberName: 'Výdaj z kasy',
+          fineName: expenseName,
+          amount: amount,
+          date: 'Právě teď',
+          type: 'expense'
+        }, ...history]);
+
+        setIsExpenseModalOpen(false);
+        setExpenseName('');
+        setExpenseAmount('');
+      };
+
+      const handleQrUpload = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onloadend = () => setQrCodeImage(reader.result);
+          reader.readAsDataURL(file);
+        }
+      };
+
+      // --- RENDEROVÁNÍ 3 TVÁŘÍ KARTY ---
+      const renderCardFace = (index) => {
+        const stateIndex = index % 3;
+
+        // TVÁŘ 0: Zůstatek
+        if (stateIndex === 0) {
+          return (
+            <div className="w-full h-full bg-gradient-to-br from-blue-600 to-indigo-700 rounded-3xl p-6 text-white shadow-xl shadow-blue-200/50 flex flex-col justify-between">
+              <div className="absolute top-5 right-5 text-white/40">
+                <i className="fas fa-sync-alt"></i>
+              </div>
+              <div>
+                <div className="flex items-center space-x-2 opacity-80 mb-1">
+                  <i className="fas fa-money-bill-wave"></i>
+                  <span className="font-medium text-sm">Aktuálně v kase</span>
+                </div>
+                <div className="text-4xl font-black tracking-tight mb-3">
+                  {totalInBank.toLocaleString('cs-CZ')} Kč
+                </div>
+              </div>
+              
+              <div className="bg-white/10 rounded-2xl p-3 flex justify-between items-center backdrop-blur-sm border border-white/10 mb-2">
+                <div>
+                  <div className="text-blue-100 text-xs font-medium mb-1">Tým aktuálně dluží</div>
+                  <div className="text-xl font-bold">{totalOwed.toLocaleString('cs-CZ')} Kč</div>
+                </div>
+                <div className="h-10 w-10 bg-red-400/20 rounded-full flex items-center justify-center text-red-200">
+                  <i className="fas fa-exclamation-triangle"></i>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex justify-between text-xs font-medium text-blue-100 mb-2">
+                  <span>Úspěšnost výběru</span>
+                  <span className="font-bold text-white">{collectionRate} %</span>
+                </div>
+                <div className="w-full bg-black/20 rounded-full h-2">
+                  <div className="bg-green-400 h-2 rounded-full transition-all duration-1000" style={{ width: `${collectionRate}%` }}></div>
+                </div>
+                <div className="flex justify-between text-[10px] text-blue-200/70 mt-1">
+                  <span>Vybráno od týmu: {totalCollected.toLocaleString('cs-CZ')}</span>
+                  <span>Cíl: {totalExpected.toLocaleString('cs-CZ')} Kč</span>
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        // TVÁŘ 1: QR Kód (Nyní na druhém místě)
+        if (stateIndex === 1) {
+          return (
+            <div className="w-full h-full bg-white rounded-3xl p-5 shadow-xl shadow-slate-200/50 border border-slate-100 flex flex-col items-center justify-center relative">
+              <div className="absolute top-5 right-5 text-slate-300">
+                <i className="fas fa-sync-alt"></i>
+              </div>
+              
+              {qrCodeImage ? (
+                <div className="flex flex-col items-center justify-center h-full w-full">
+                  <h3 className="font-bold text-slate-800 text-sm mb-1 absolute top-5 left-6">Platba QR kódem</h3>
+                  <img src={qrCodeImage} alt="QR" className="h-[130px] object-contain mb-3 mt-4" />
+                  <div className="flex gap-2 w-full px-1">
+                     <label 
+                       className="flex-1 bg-slate-50 text-slate-600 font-bold py-2.5 rounded-xl text-xs text-center cursor-pointer border border-slate-100 hover:bg-slate-100 transition"
+                       onClick={e => e.stopPropagation()}
+                     >
+                       <i className="fas fa-sync-alt mr-1"></i> Změnit
+                       <input type="file" className="hidden" accept="image/*" onChange={handleQrUpload} />
+                     </label>
+                     <button 
+                       onClick={(e) => { e.stopPropagation(); setQrCodeImage(null); }} 
+                       className="flex-1 bg-red-50 text-red-500 font-bold py-2.5 rounded-xl text-xs border border-red-100 hover:bg-red-100 transition"
+                     >
+                       <i className="fas fa-trash mr-1"></i> Smazat
+                     </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center text-center px-2 w-full h-full">
+                   <div className="w-14 h-14 bg-purple-100 text-purple-500 rounded-full flex items-center justify-center mb-3">
+                     <i className="fas fa-qrcode text-2xl"></i>
+                   </div>
+                   <p className="text-sm font-bold text-slate-700 mb-1">QR kód banky</p>
+                   <p className="text-[11px] text-slate-500 mb-4 px-2">Nahraj obrázek s QR kódem ze svého bankovnictví.</p>
+                   <label 
+                     className="bg-purple-600 text-white font-bold py-2.5 px-6 rounded-xl text-xs cursor-pointer shadow-md shadow-purple-200 hover:bg-purple-700 transition w-full"
+                     onClick={e => e.stopPropagation()}
+                   >
+                     <i className="fas fa-upload mr-1"></i> Nahrát QR kód
+                     <input type="file" className="hidden" accept="image/*" onChange={handleQrUpload} />
+                   </label>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        // TVÁŘ 2: Graf (Nyní na třetím místě)
+        if (stateIndex === 2) {
+          return (
+            <div className="w-full h-full bg-white rounded-3xl p-6 shadow-xl shadow-slate-200/50 border border-slate-100 flex flex-col">
+              <div className="absolute top-5 right-5 text-slate-300">
+                <i className="fas fa-sync-alt"></i>
+              </div>
+              <h3 className="font-bold text-slate-800 text-lg mb-1">Přehled financí</h3>
+              
+              <div className="flex-1 mt-1 flex justify-around items-end border-b border-slate-100 pb-2">
+                <div className="flex flex-col items-center w-1/3 h-full justify-end">
+                  <span className="text-[10px] sm:text-xs font-bold text-slate-500 mb-1">{totalCollected.toLocaleString('cs-CZ')} Kč</span>
+                  <div className="w-8 sm:w-10 bg-green-400 rounded-t-lg shadow-sm transition-all duration-1000" style={{ height: `${(totalCollected / maxChartValue) * 100}%`, minHeight: '4px' }}></div>
+                </div>
+                <div className="flex flex-col items-center w-1/3 h-full justify-end">
+                  <span className="text-[10px] sm:text-xs font-bold text-slate-500 mb-1">{totalExpenses.toLocaleString('cs-CZ')} Kč</span>
+                  <div className="w-8 sm:w-10 bg-orange-400 rounded-t-lg shadow-sm transition-all duration-1000" style={{ height: `${(totalExpenses / maxChartValue) * 100}%`, minHeight: '4px' }}></div>
+                </div>
+                <div className="flex flex-col items-center w-1/3 h-full justify-end">
+                  <span className="text-[10px] sm:text-xs font-bold text-slate-500 mb-1">{totalOwed.toLocaleString('cs-CZ')} Kč</span>
+                  <div className="w-8 sm:w-10 bg-red-400 rounded-t-lg shadow-sm transition-all duration-1000" style={{ height: `${(totalOwed / maxChartValue) * 100}%`, minHeight: '4px' }}></div>
+                </div>
+              </div>
+
+              <div className="flex justify-around items-center pt-3">
+                <span className="text-[10px] font-bold text-green-600 uppercase">Příjmy</span>
+                <span className="text-[10px] font-bold text-orange-500 uppercase">Výdaje</span>
+                <span className="text-[10px] font-bold text-red-500 uppercase">Dluhy</span>
+              </div>
+            </div>
+          );
+        }
+      };
+
+      // --- KOMPONENTY MODALŮ ---
       const AddFineModal = () => (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center transition-opacity">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center transition-opacity animate-in fade-in duration-200">
           <div className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl h-[80vh] sm:h-[600px] flex flex-col shadow-2xl">
             <div className="flex justify-between items-center p-5 border-b border-gray-100">
               <h2 className="text-xl font-bold text-slate-800">
                 {selectedMember ? `Pokuta pro: ${selectedMember.name}` : 'Nová pokuta'}
               </h2>
-              <button onClick={() => { setIsAddModalOpen(false); setSelectedMember(null); }} className="p-2 bg-slate-100 rounded-full text-slate-500 hover:bg-slate-200">
+              <button onClick={() => { setIsAddModalOpen(false); setSelectedMember(null); }} className="p-2 bg-slate-100 rounded-full text-slate-500 hover:bg-slate-200 transition">
                 <i className="fas fa-times"></i>
               </button>
             </div>
@@ -160,7 +384,7 @@
                       <button 
                         key={m.id}
                         onClick={() => setSelectedMember(m)}
-                        className="w-full flex items-center p-3 bg-white rounded-xl shadow-sm border border-slate-100 active:bg-blue-50 text-left transition"
+                        className="w-full flex items-center p-3 bg-white rounded-xl shadow-sm border border-slate-100 active:bg-blue-50 text-left transition hover:border-blue-300"
                       >
                         <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold mr-3">
                           {m.name.split(' ').map(n => n[0]).join('')}
@@ -193,16 +417,173 @@
         </div>
       );
 
+      const QuickPayModal = () => (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center transition-opacity animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl h-[60vh] sm:h-[500px] flex flex-col shadow-2xl">
+            <div className="flex justify-between items-center p-5 border-b border-gray-100">
+              <h2 className="text-xl font-bold text-slate-800">Kdo jde platit?</h2>
+              <button onClick={() => setIsQuickPayModalOpen(false)} className="p-2 bg-slate-100 rounded-full text-slate-500 hover:bg-slate-200 transition">
+                <i className="fas fa-times"></i>
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4 bg-slate-50 no-scrollbar space-y-2">
+              {members.filter(m => m.owed > 0).map(m => (
+                <button 
+                  key={m.id}
+                  onClick={() => {
+                    setIsQuickPayModalOpen(false);
+                    openPayModal(m);
+                  }}
+                  className="w-full flex items-center justify-between p-4 bg-white rounded-xl shadow-sm border border-slate-100 active:bg-green-50 transition hover:border-green-300 group"
+                >
+                  <div className="flex items-center">
+                    <div className="w-10 h-10 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center font-bold mr-3 group-active:bg-green-100 group-active:text-green-600 transition">
+                      {m.name.split(' ').map(n => n[0]).join('')}
+                    </div>
+                    <div className="text-left">
+                      <span className="font-semibold text-slate-700 block">{m.name}</span>
+                      <span className="text-xs text-red-400 font-medium">Dluží {m.owed} Kč</span>
+                    </div>
+                  </div>
+                  <i className="fas fa-chevron-right text-slate-300"></i>
+                </button>
+              ))}
+              
+              {members.filter(m => m.owed > 0).length === 0 && (
+                <div className="text-center py-10">
+                  <div className="w-16 h-16 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <i className="fas fa-check text-green-500 text-2xl"></i>
+                  </div>
+                  <p className="font-bold text-slate-700 text-lg">Nikdo nic nedluží!</p>
+                  <p className="text-slate-400 text-sm mt-1">Všichni mají vzorně zaplaceno.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+
+      const PayDebtModal = () => {
+        if (!payingMember) return null;
+        return (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center transition-opacity animate-in fade-in duration-200">
+            <div className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 flex flex-col shadow-2xl">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-bold text-slate-800">Uhradit dluh</h2>
+                <button onClick={() => setPayingMember(null)} className="p-2 bg-slate-100 rounded-full text-slate-500 hover:bg-slate-200 transition">
+                  <i className="fas fa-times"></i>
+                </button>
+              </div>
+              
+              <div className="text-center mb-8">
+                <div className="w-20 h-20 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center font-bold text-3xl mx-auto mb-3 border-4 border-white shadow-md">
+                  {payingMember.name.split(' ').map(n => n[0]).join('')}
+                </div>
+                <h3 className="font-bold text-2xl text-slate-800">{payingMember.name}</h3>
+                <p className="text-slate-500 font-medium mt-1">Celkový dluh: <span className="font-bold text-red-500">{payingMember.owed} Kč</span></p>
+              </div>
+
+              <div className="mb-10 bg-slate-50 p-5 rounded-2xl border border-slate-100">
+                <div className="flex justify-between items-end mb-4">
+                  <span className="text-sm font-bold text-slate-500">Částka k úhradě:</span>
+                  <span className="text-4xl font-black text-green-600">{payAmount} Kč</span>
+                </div>
+                
+                <input 
+                  type="range" 
+                  min="1" 
+                  max={payingMember.owed} 
+                  value={payAmount}
+                  onChange={(e) => setPayAmount(Number(e.target.value))}
+                  className="w-full h-3 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-green-500"
+                />
+                
+                <div className="flex justify-between text-xs text-slate-400 mt-3 font-bold">
+                  <span>1 Kč</span>
+                  <span>{payingMember.owed} Kč</span>
+                </div>
+              </div>
+
+              <button 
+                onClick={confirmPayment}
+                className="w-full bg-green-500 text-white font-bold py-4 rounded-2xl shadow-lg shadow-green-200 active:scale-95 transition-transform text-lg flex justify-center items-center"
+              >
+                <i className="fas fa-check-circle mr-2"></i> Potvrdit platbu
+              </button>
+            </div>
+          </div>
+        );
+      };
+
+      const ExpenseModal = () => (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center transition-opacity animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 flex flex-col shadow-2xl">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold text-slate-800">Nový výdaj z kasy</h2>
+              <button onClick={() => setIsExpenseModalOpen(false)} className="p-2 bg-slate-100 rounded-full text-slate-500 hover:bg-slate-200 transition">
+                <i className="fas fa-times"></i>
+              </button>
+            </div>
+            
+            <form onSubmit={handleAddExpense} className="space-y-4 mb-4">
+              <div>
+                <label className="block text-sm font-bold text-slate-500 mb-1">Za co se platilo?</label>
+                <input 
+                  type="text" 
+                  placeholder="Např. Týmová večeře, Míče..." 
+                  value={expenseName}
+                  onChange={(e) => setExpenseName(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-4 font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-500 mb-1">Částka (Kč)</label>
+                <input 
+                  type="number" 
+                  min="1"
+                  placeholder="0" 
+                  value={expenseAmount}
+                  onChange={(e) => setExpenseAmount(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-4 font-black text-slate-800 text-xl focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  required
+                />
+              </div>
+              
+              {Number(expenseAmount) > totalInBank && (
+                <div className="bg-red-50 text-red-600 p-3 rounded-lg text-xs font-bold flex items-center">
+                  <i className="fas fa-exclamation-triangle mr-2 text-lg"></i>
+                  <span>Pozor, vybíráš víc, než je aktuálně v kase! Jdeš do mínusu.</span>
+                </div>
+              )}
+
+              <button 
+                type="submit"
+                className="w-full bg-orange-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-orange-200 active:scale-95 transition-transform text-lg mt-4 flex justify-center items-center"
+              >
+                <i className="fas fa-shopping-cart mr-2"></i> Zaznamenat výdaj
+              </button>
+            </form>
+          </div>
+        </div>
+      );
+
       return (
         <>
           {/* HEADER */}
-          <div className="bg-white pt-12 pb-4 px-6 rounded-b-3xl shadow-sm z-10 w-full sticky top-0">
+          <div className="bg-white pt-12 pb-4 px-6 rounded-b-3xl shadow-sm z-10 w-full sticky top-0 flex justify-between items-center">
             <h1 className="text-2xl font-extrabold text-slate-800 tracking-tight">
               {activeTab === 'home' && 'Týmová Kasa'}
               {activeTab === 'leaderboard' && 'Síň slávy'}
               {activeTab === 'members' && 'Seznam hráčů'}
               {activeTab === 'fines' && 'Sazebník pokut'}
             </h1>
+            {activeTab === 'home' && (
+              <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                <i className="fas fa-wallet text-blue-600 text-sm"></i>
+              </div>
+            )}
           </div>
 
           {/* CONTENT AREA */}
@@ -211,77 +592,98 @@
             {activeTab === 'home' && (
               <div className="p-5 space-y-6">
                 
-                <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-3xl p-6 text-white shadow-lg shadow-blue-200">
-                  <div className="flex items-center space-x-2 opacity-80 mb-1">
-                    <i className="fas fa-money-bill-wave"></i>
-                    <span className="font-medium text-sm">Aktuálně v kase</span>
+                {/* OSOBNÍ UVÍTÁNÍ */}
+                <div className="flex items-center justify-between mb-2">
+                  <div>
+                    <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Dnešní přehled</h2>
+                    <h3 className="text-xl font-black text-slate-800">Ahoj, Pokladníku 👋</h3>
                   </div>
-                  <div className="text-4xl font-black tracking-tight mb-4">
-                    {totalInBank.toLocaleString('cs-CZ')} Kč
-                  </div>
-                  
-                  <div className="bg-white/20 rounded-2xl p-4 flex justify-between items-center backdrop-blur-sm">
-                    <div>
-                      <div className="text-blue-100 text-xs font-medium mb-1">Dluží se</div>
-                      <div className="text-xl font-bold">{totalOwed.toLocaleString('cs-CZ')} Kč</div>
+                </div>
+
+                {/* HLAVNÍ OTOČNÁ KARTA (3 STRANY) */}
+                <div 
+                  className="perspective-1000 w-full h-[280px] cursor-pointer"
+                  onClick={() => setFlipCount(f => f + 1)}
+                >
+                  <div className="relative w-full h-full transition-transform duration-700 transform-style-3d" style={{ transform: `rotateY(${flipCount * 180}deg)` }}>
+                    
+                    {/* DOM pro Líc (rotace 0, 360, 720...) */}
+                    <div className="absolute top-0 left-0 w-full h-full backface-hidden">
+                      {renderCardFace(sideAIndex)}
                     </div>
-                    <div className="h-10 w-10 bg-white/20 rounded-full flex items-center justify-center">
-                      <i className="fas fa-exclamation-circle"></i>
+
+                    {/* DOM pro Rub (rotace 180, 540, 900...) */}
+                    <div className="absolute top-0 left-0 w-full h-full backface-hidden rotate-y-180">
+                      {renderCardFace(sideBIndex)}
                     </div>
                   </div>
                 </div>
 
-                <div className="flex justify-center gap-8 py-2">
+                {/* QUICK ACTIONS - POUZE 3 TLAČÍTKA */}
+                <div className="flex justify-between gap-3 py-2">
                   <button 
                     onClick={() => setIsAddModalOpen(true)}
-                    className="flex flex-col items-center justify-center gap-2 group"
+                    className="flex-1 flex flex-col items-center justify-center py-3 bg-white rounded-3xl shadow-sm border border-slate-100 group hover:border-blue-200 active:bg-slate-50 transition"
                   >
-                    <div className="w-16 h-16 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-lg shadow-blue-200 group-active:scale-95 transition-transform">
-                      <i className="fas fa-plus text-2xl"></i>
+                    <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-2 group-active:scale-95 transition-transform">
+                      <i className="fas fa-plus text-lg"></i>
                     </div>
-                    <span className="font-bold text-slate-700 text-sm">Zadat pokutu</span>
+                    <span className="font-bold text-slate-700 text-[11px] uppercase tracking-wide">Pokuta</span>
                   </button>
+                  
                   <button 
-                    onClick={() => setActiveTab('members')}
-                    className="flex flex-col items-center justify-center gap-2 group"
+                    onClick={() => setIsQuickPayModalOpen(true)}
+                    className="flex-1 flex flex-col items-center justify-center py-3 bg-white rounded-3xl shadow-sm border border-slate-100 group hover:border-green-200 active:bg-slate-50 transition"
                   >
-                    <div className="w-16 h-16 bg-green-500 text-white rounded-full flex items-center justify-center shadow-lg shadow-green-200 group-active:scale-95 transition-transform">
-                      <i className="fas fa-check text-2xl"></i>
+                    <div className="w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-2 group-active:scale-95 transition-transform">
+                      <i className="fas fa-check text-lg"></i>
                     </div>
-                    <span className="font-bold text-slate-700 text-sm">Zaplatit dluh</span>
+                    <span className="font-bold text-slate-700 text-[11px] uppercase tracking-wide">Uhradit</span>
+                  </button>
+
+                  <button 
+                    onClick={() => setIsExpenseModalOpen(true)}
+                    className="flex-1 flex flex-col items-center justify-center py-3 bg-white rounded-3xl shadow-sm border border-slate-100 group hover:border-orange-200 active:bg-slate-50 transition"
+                  >
+                    <div className="w-12 h-12 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mb-2 group-active:scale-95 transition-transform">
+                      <i className="fas fa-shopping-cart text-lg"></i>
+                    </div>
+                    <span className="font-bold text-slate-700 text-[11px] uppercase tracking-wide">Výdaj</span>
                   </button>
                 </div>
 
+                {/* HISTORIE */}
                 <div>
-                  <div className="flex items-center justify-between mb-3 px-1">
+                  <div className="flex items-center justify-between mb-4 px-1">
                     <h3 className="font-bold text-slate-800 text-lg">Poslední akce</h3>
                   </div>
 
                   <div className="space-y-3">
-                    {history.slice(0, 5).map(item => (
-                      <div key={item.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
-                        <div className="flex items-center space-x-3">
-                          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${item.type === 'fine' ? 'bg-red-50 text-red-500' : 'bg-green-50 text-green-500'}`}>
-                            {item.type === 'fine' ? <i className="fas fa-exclamation-circle"></i> : <i className="fas fa-check"></i>}
+                    {history.slice(0, 4).map(item => (
+                      <div key={item.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between hover:bg-slate-50 transition">
+                        <div className="flex items-center space-x-4">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${item.type === 'fine' ? 'bg-red-50 text-red-500' : item.type === 'expense' ? 'bg-orange-50 text-orange-500' : 'bg-green-50 text-green-500'}`}>
+                            {item.type === 'fine' ? <i className="fas fa-arrow-down"></i> : item.type === 'expense' ? <i className="fas fa-shopping-cart"></i> : <i className="fas fa-arrow-up"></i>}
                           </div>
                           <div>
-                            <p className="font-semibold text-slate-700">{item.memberName}</p>
-                            <p className="text-xs text-slate-400">{item.fineName} • {item.date}</p>
+                            <p className="font-bold text-slate-700">{item.memberName}</p>
+                            <p className="text-xs text-slate-400 font-medium">{item.fineName} • {item.date}</p>
                           </div>
                         </div>
-                        <div className={`font-bold ${item.type === 'fine' ? 'text-red-500' : 'text-green-500'}`}>
-                          {item.type === 'fine' ? '+' : '-'}{item.amount} Kč
+                        <div className={`font-black ${item.type === 'fine' ? 'text-slate-700' : item.type === 'expense' ? 'text-orange-500' : 'text-green-500'}`}>
+                          {item.type === 'fine' ? '' : item.type === 'expense' ? '-' : '+'}{item.amount} Kč
                         </div>
                       </div>
                     ))}
                     {history.length === 0 && (
-                      <p className="text-center text-slate-400 py-4 text-sm font-medium">Zatím žádné akce</p>
+                      <p className="text-center text-slate-400 py-6 text-sm font-medium border-2 border-dashed border-slate-200 rounded-2xl">Zatím se nic nestalo.</p>
                     )}
                   </div>
                 </div>
               </div>
             )}
 
+            {/* LEADERBOARD TAB */}
             {activeTab === 'leaderboard' && (
               <div className="p-5">
                 <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 mb-6">
@@ -344,6 +746,7 @@
               </div>
             )}
 
+            {/* MEMBERS TAB */}
             {activeTab === 'members' && (
               <div className="p-5 space-y-4">
                 <div className="flex justify-between items-center px-1 mb-2">
@@ -417,7 +820,7 @@
                               <span className="font-black text-red-500 text-lg">{member.owed} Kč</span>
                               <span className="text-[10px] text-red-400 font-bold uppercase tracking-wider">Dluží</span>
                               <button 
-                                onClick={() => handlePayDebt(member.id)}
+                                onClick={() => openPayModal(member)}
                                 className="mt-2 bg-green-100 text-green-700 text-xs font-bold px-3 py-1.5 rounded-lg active:bg-green-200 transition"
                               >
                                 Uhradit
@@ -436,6 +839,7 @@
               </div>
             )}
 
+            {/* FINES TAB */}
             {activeTab === 'fines' && (
               <div className="p-5">
                 <div className="grid grid-cols-1 gap-3">
@@ -479,7 +883,11 @@
             </button>
           </div>
 
+          {/* MODALS */}
           {isAddModalOpen && <AddFineModal />}
+          {isQuickPayModalOpen && <QuickPayModal />}
+          {payingMember && <PayDebtModal />}
+          {isExpenseModalOpen && <ExpenseModal />}
         </>
       );
     }
